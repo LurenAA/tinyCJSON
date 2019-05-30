@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <ctype.h>
 
 //标志节点类型
 typedef enum NodeType {     
@@ -18,7 +19,8 @@ typedef enum NodeType {
   NodeType_STRING,
   NodeType_TRUE,
   NodeType_FALSE,
-  NodeType_NULL
+  NodeType_NULL,
+  NOTYPE = 0
 } nodetype_t;
 
 //记录数据
