@@ -10,6 +10,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <ctype.h>
+#include <float.h>
+#include <math.h>
+#include <limits.h>
 
 //标志节点类型
 typedef enum NodeType {     
@@ -50,6 +53,8 @@ extern void new_hook(NewHook *hook); //初始化allocator
 extern Cjson* create_simple_type_node(nodetype_t nodeType, const char * cpString); //添加除了array和object，number外其他节点的数据
 extern Cjson* create_new_node(nodetype_t nodeType); //创建节点
 extern Cjson* cjson_parse(const char *); //解析json函数
+extern Cjson* add_next(Cjson* cur, Cjson* next); //添加下个节点
+extern bool deleteCjson(Cjson* out); //删除Cjson对象
 
 //创建各种类型的节点
 #define create_null_node() create_simple_type_node(NodeType_NULL, "null")   //创建null节点

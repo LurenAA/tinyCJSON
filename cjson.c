@@ -4,10 +4,12 @@ static const char* parse_value(const char* str, Cjson* out); //分析函数总�
 static const char* parse_object(const char* str, Cjson* out); //解析对象
 static const char* parse_string(const char* str, Cjson* out); //解析字符串
 static const char* parse_number(const char* str, Cjson* out); //分析数字
+static const char* parse_array(const char* str, Cjson* out); //解析数组
 static Cjson* assign_simple_type_node(Cjson* item, 
   nodetype_t nodeType, const char * cpString); //填充null，false，true节点
 static void set_nodeType(Cjson* item, nodetype_t nodeType); //设置nodeType属性
-static int compute_hex(const char**); //计算utf-16的值
+static int compute_hex(const char**); //计算utf-16的值，计算前导代理和后尾代理
+static const char* skip_space(const char* str); // 跳过空白格
 
 static void* (*cjson_malloc) (size_t size) = malloc;  //malloc
 static void (*cjson_free) (void *ptr) = free;  //free
@@ -45,6 +47,7 @@ Cjson* create_simple_type_node(nodetype_t nodeType, const char * cpString) {
   return item;
 }
 
+//填充null，false，true节点
 static Cjson* assign_simple_type_node(Cjson* item, nodetype_t nodeType, const char * cpString) {
   const size_t len = strlen(cpString);
   item->value.complex = (char*)cjson_malloc(len + 1);
@@ -57,11 +60,7 @@ static Cjson* assign_simple_type_node(Cjson* item, nodetype_t nodeType, const ch
 Cjson* cjson_parse(const char * str) {
   Cjson* out = create_new_node(NOTYPE);
   const char* end = parse_value(str, out);
-  if(*end == '\0') {
-    return out;
-  }
-  printf("error in cjson_parse method");
-  exit(1);
+  return out;
 }
 
 //解析各种类型的值
@@ -73,9 +72,10 @@ static const char* parse_value(const char* str, Cjson* out) {
       set_nodeType(out, NodeType_OBJECT);
       ptr = parse_object(str, out);
       break;
-    // case '[':
-    //   *out = create_array_node();
-    //   break;
+    case '[':
+      set_nodeType(out, NodeType_ARRAY);
+      ptr = parse_array(str, out);
+      break;
     case 't':
     case 'T':
       set_nodeType(out, NodeType_TRUE);
@@ -110,16 +110,7 @@ static const char* parse_value(const char* str, Cjson* out) {
   return ptr;
 } 
 
-static const char* parse_object(const char* str, Cjson* out) {
-  const char *ptr = str ;
-  if(*ptr != '{') {
-    printf("error in parse_object method\n");
-    exit(1);
-  }
-  ptr++;
-
-}
-
+//解析字符串
 static const char* parse_string(const char* str, Cjson* out) {
   const char* ptr = str;
   int len = 0;
@@ -171,7 +162,7 @@ static const char* parse_string(const char* str, Cjson* out) {
         case 't':
           *out_ptr++ = '\t';
           break;
-        case 'u': {
+        case 'u': { //unicode
           ++ptr;
           unsigned int w1 = compute_hex(&ptr), 
             w2,
@@ -241,6 +232,7 @@ static const char* parse_string(const char* str, Cjson* out) {
   return ptr;
 }
 
+//计算前导代理和后尾代理
 static int compute_hex(const char** ptr) {
   int res = 0x00,
    lowChar;
@@ -264,12 +256,142 @@ static int compute_hex(const char** ptr) {
   return res;
 }
 
+//设置nodeType
 static void set_nodeType(Cjson* item, nodetype_t nodeType) {
   if(item && nodeType) {
     item->nodeType = nodeType;
   }
 }
 
+//解析数字
 static const char* parse_number(const char* str, Cjson* out) {
+  const char* ptr = str;
+  char* end;
+  double num;
+  num = strtod(str, &end);
+  if(num - 0 < DBL_EPSILON && end == str) {
+    printf("str is not a number, error in parse_number function");
+    exit(1);
+  }
+  ptr = end;
+  if(fabs(num - (int)num) < DBL_EPSILON) {
+    out->value.doubleNum = DBL_MIN;
+    out->value.intNum = num;
+  } else {
+    out->value.doubleNum = num;
+    out->value.intNum = INT_MIN;
+  }
+  return ptr;
+}
+
+//解析对象
+static const char* parse_object(const char* str, Cjson* out) {
+  const char *ptr = str;
+  Cjson* cur = out;
+  bool firstContentKey = true; //标识对象的第一个属性
+  if(*ptr++ != '{') {
+    printf("error in parse_object method\n");
+    exit(1);
+  }
+  if(*ptr == '}') {
+    return ++ptr;
+  }
+
+  while(firstContentKey || *ptr == ',') {
+    *ptr == ',' && ++ptr;
+    Cjson *child = create_new_node(NOTYPE);
+    if(firstContentKey) {
+      cur->child = child;
+      firstContentKey = false;
+    } else {
+      cur = add_next(cur, child);
+    }
+    
+    ptr = skip_space(ptr);
+    if(*ptr != '\"') {
+      printf("object need name, error in parse_object");
+      exit(1);
+    }
+    ptr = parse_value(ptr, child);
+    if(child->nodeType != NodeType_STRING) {
+      printf("keyNmae must be string type");
+      exit(1);
+    }
+    child->keyName = child->value.complex;
+    child->value.complex = NULL;
+    ptr = skip_space(ptr);
+    if(*ptr++ != ':') {
+      printf("object need : after keyName, error in parse_object");
+      exit(1);
+    }
+    ptr = skip_space(ptr);
+    ptr = parse_value(ptr, child);
+    ptr = skip_space(ptr);
+    cur = child;
+  }
+  
+  if(*ptr++ != '}') {
+    printf("end object must be a }, error in parse_object");
+    exit(1);
+  }
+  return ptr;
+}
+
+//跳过空白
+static const char* skip_space(const char* str) {
+  while(str && (*str < 32 || *str == ' ')) {
+    str++;
+  }
+  return str;
+}
+
+//添加下一个节点
+Cjson* add_next(Cjson* cur, Cjson* next) {
+  if(!cur) {
+    printf("can not add next node without current one, error in add_next function");
+    exit(1);
+  }
+  if(cur->next) {
+    next->next = cur->next;
+    cur->prev = next;
+  }
+  cur->next = next;
+  next->prev = cur;
+  return cur;
+}
+
+//解析数组
+static const char* parse_array(const char* str, Cjson* out) {
+  const char* ptr = str;
+  bool firstArrayItemFlag = true; //标志第一个数组对象，因为第一个开头不是，
+  if(!out) {
+    printf("out cant not be a NULL pointer, error in parse_array method");
+    exit(1);
+  }
+  Cjson* cur = out;
+  while(firstArrayItemFlag || *ptr == ',') {
+    ++ptr;
+    Cjson* newOne = create_new_node(NOTYPE);
+    if(firstArrayItemFlag) {
+      firstArrayItemFlag = false;
+      cur->child = newOne;
+    } else {
+      cur = add_next(cur, newOne);
+    }
+    ptr = skip_space(ptr);  
+    ptr = parse_value(ptr, cur);
+    ptr = skip_space(ptr);
+    cur = newOne;
+  }
+
+  if(*ptr++ != ']') {
+    printf("array must end with a ], error in parse_array method \n");
+    exit(1);
+  }
+  return ptr;
+}
+
+ //删除Cjson对象
+bool deleteCjson(Cjson* out) {
 
 }
