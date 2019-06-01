@@ -17,12 +17,17 @@ int main(int argc, const char ** argv) {
 	
 	// Cjson* res1 = cjson_parse(text1);
 	// Cjson* res2 = cjson_parse(text2);
-	Cjson* res3 = cjson_parse(text3);
+	// Cjson* res3 = cjson_parse(text3);
 	// Cjson* res4 = cjson_parse(text4);
 	// Cjson* res5 = cjson_parse(text5);
 	// Cjson* res6 = cjson_parse(text6);
 	// Cjson* res7 = cjson_parse(text7);
 	// Cjson* res8 = cjson_parse(text8);
 	// Cjson* res9 = cjson_parse(text9);
+	Cjson* res10 = cjson_parse(text5);
+	const char* out = print_json(res10);
+	printf("%s\n", out);
+	free((void*)out);
 
+	deleteCjson(res10);
 }

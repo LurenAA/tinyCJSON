@@ -42,6 +42,7 @@ typedef struct _cjson{
   datavalue_t value;  //值
   bool isReference; //是否是引用
   char *keyName; //建值
+  bool isInt; //表示是不是整数
 } Cjson;
 
 typedef struct {
@@ -54,7 +55,9 @@ extern Cjson* create_simple_type_node(nodetype_t nodeType, const char * cpString
 extern Cjson* create_new_node(nodetype_t nodeType); //创建节点
 extern Cjson* cjson_parse(const char *); //解析json函数
 extern Cjson* add_next(Cjson* cur, Cjson* next); //添加下个节点
-extern bool deleteCjson(Cjson* out); //删除Cjson对象
+extern Cjson* deleteCjson(Cjson* out); //删除Cjson对象
+
+extern const char* print_json(const Cjson* out); //输出json格式
 
 //创建各种类型的节点
 #define create_null_node() create_simple_type_node(NodeType_NULL, "null")   //创建null节点

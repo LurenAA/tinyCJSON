@@ -10,6 +10,16 @@ static Cjson* assign_simple_type_node(Cjson* item,
 static void set_nodeType(Cjson* item, nodetype_t nodeType); //设置nodeType属性
 static int compute_hex(const char**); //计算utf-16的值，计算前导代理和后尾代理
 static const char* skip_space(const char* str); // 跳过空白格
+static char* cjson_strcopy(const char* src); //复制字符串节点
+static const char* print_simple_node(const Cjson* out); //输出简单节点
+static const char* print_string(const Cjson* out); //输出string节点
+static const char* print_unicode(const char* str, char* des); //输出unicode
+static const char* print_number(const Cjson* out); //输出数字的json
+static const char* print_array(const Cjson* out); //输出array的json
+static const char* print_object(const Cjson* out); //输出object的json
+#define print_null(out) print_simple_node(out)   //输出null节点
+#define print_true(out) print_simple_node(out)//输出true节点
+#define print_false(out) print_simple_node(out)//输出false节点
 
 static void* (*cjson_malloc) (size_t size) = malloc;  //malloc
 static void (*cjson_free) (void *ptr) = free;  //free
@@ -141,6 +151,9 @@ static const char* parse_string(const char* str, Cjson* out) {
     } else {
       ++ptr;
       switch(*ptr) {
+        case '/':
+          *out_ptr++ = '/';
+          break;
         case '"': 
           *out_ptr++ = '\"';
           break;
@@ -275,11 +288,11 @@ static const char* parse_number(const char* str, Cjson* out) {
   }
   ptr = end;
   if(fabs(num - (int)num) < DBL_EPSILON) {
-    out->value.doubleNum = DBL_MIN;
     out->value.intNum = num;
+    out->isInt = true;
   } else {
     out->value.doubleNum = num;
-    out->value.intNum = INT_MIN;
+    out->isInt = false;
   }
   return ptr;
 }
@@ -378,10 +391,10 @@ static const char* parse_array(const char* str, Cjson* out) {
     } else {
       cur = add_next(cur, newOne);
     }
+    cur = newOne;
     ptr = skip_space(ptr);  
     ptr = parse_value(ptr, cur);
     ptr = skip_space(ptr);
-    cur = newOne;
   }
 
   if(*ptr++ != ']') {
@@ -392,6 +405,373 @@ static const char* parse_array(const char* str, Cjson* out) {
 }
 
  //删除Cjson对象
-bool deleteCjson(Cjson* out) {
+Cjson* deleteCjson(Cjson* out) {
+  if(out->child) {
+    deleteCjson(out->child);
+  }
+  if(out->keyName) 
+   cjson_free(out->keyName);
+  if(out->nodeType != NodeType_NUMBER) {
+    cjson_free(out->value.complex);
+  }
+  Cjson* next = out->next;
+  cjson_free(out);
+  if(next)
+    deleteCjson(next);
+}
 
+//输出json节点总入口
+const char* print_json(const Cjson* out) {
+  const char* res = NULL;
+  switch (out->nodeType)
+  {
+    case NodeType_NULL:
+      res = print_null(out);
+      break;
+    case NodeType_FALSE:
+      res = print_false(out);
+      break;
+    case  NodeType_TRUE:
+      res = print_true(out);
+      break;
+    case NodeType_STRING:
+      res = print_string(out);
+      break;
+    case NodeType_NUMBER:
+      res = print_number(out);
+      break;
+    case NodeType_ARRAY:
+      res = print_array(out);
+      break;
+    case NodeType_OBJECT:
+      res = print_object(out);
+      break;
+    default:
+      break;
+  }
+  return res;
+}
+
+//输出简单节点
+static const char* print_simple_node(const Cjson* out) {
+  static nodetype_t allowTypes[] = { NodeType_TRUE, NodeType_FALSE, NodeType_NULL};
+  bool nodeTypeFlag = false;
+  for(int i = 0; i < 3; i++) {
+    if(out->nodeType == allowTypes[i]) {
+      nodeTypeFlag = true;
+    }
+  }
+  if(nodeTypeFlag == false) {
+    printf("type error in print_simple_node method\n");
+    exit(1);
+  }
+  char* res;
+  res = cjson_strcopy(out->value.complex);
+  return res;
+}
+
+//复制字符串
+static char* cjson_strcopy(const char* src){
+  if(!src) {
+    printf("error in cjson strcopy, src need be a string\n");
+    exit(1);
+  }
+  int len = strlen(src);
+  char* res = (char*)malloc(len);
+  res = strcpy(res, src);
+  return res;
+}
+
+//输出string节点
+static const char* print_string(const Cjson* out) {
+  if(out->nodeType != NodeType_STRING) {
+    printf("type error in print_String\n");
+    exit(1);
+  }
+  const char* ptr = out->value.complex;
+  int len = 0, curLen = 80; //curlen记录现在res长度
+  char* res; 
+  char* resStart = (char*)cjson_malloc(curLen);
+  res = resStart;
+  memset(res, 0, curLen);
+  *res++ = '\"';
+  len++;
+  while(*ptr != '\0') {
+    if(*ptr >= 32 && *ptr != '\"' && *ptr != '\\') {
+      *res++ = *ptr++;
+      len++;
+    } else {
+      len += 2;
+      *res++ = '\\';
+      switch(*ptr) {
+        case '\"':
+        case '/':
+        case '\\':
+          *res++ = *ptr;
+          break;
+        case '\b':
+          *res++ = 'b';
+          break;
+        case '\f':
+          *res++ = 'f';
+          break;
+        case '\n':
+          *res++ = 'n';
+          break;
+        case '\r':
+          *res++ = 'r';
+          break;
+        case '\t':
+          *res++ = 't';
+          break;
+        default:
+          *res++ = 'u';
+          ptr = print_unicode(ptr, res);    //将utf-8转化为utf-16
+          --ptr;
+          while(*res >= 48 && *res <= 57 ||  //跳过unicode的几个字符
+          *res >= 65 && *res <= 70 ||
+          *res >= 97 && *res <= 102) {
+            res++;
+            len++;
+          }
+      }
+      ++ptr;
+    }
+    if(len >= curLen) {
+      while(curLen <= len)
+        curLen *= 2;
+      char* tmpRes = (char*)realloc(res, curLen);
+      if(tmpRes = NULL) {
+        cjson_free(resStart);
+        printf("realloc error in print_string\n");
+        exit(1);
+      }
+      resStart = tmpRes;
+      res = resStart + curLen - 80;
+    }
+  }
+  *res++ = '\"';
+  *res++ = '\0';
+  len += 2;
+  char* tmpRes = (char*) realloc(resStart, len);
+  if(tmpRes == NULL) {
+    cjson_free(resStart);
+    printf("realloc error in print_string\n");
+    exit(1);
+  }
+  return tmpRes;
+}
+
+//输出unicode
+static const char* print_unicode(const char* str, char* des) {
+  const char* ptr = str;
+  int size;
+  unsigned int firstChar = (unsigned int) *ptr & 0xff, 
+    unicode = 0;
+  if(firstChar <= 0x7f && firstChar >= 0) {
+    size = 1;
+  } else if (firstChar >= 0xc0 && firstChar <= 0xdf) {
+    size = 2;
+  } else if (firstChar >= 0xe0 && firstChar <= 0xef) {
+    size = 3;
+  } else if (firstChar >= 0xf0 && firstChar <= 0xf7) {
+    size =  4;
+  } else {
+    printf("invalid unicode in print_unicode\n");
+    exit(1);
+  }
+  if(size == 1) {
+    unicode = (unsigned int) *ptr++ & 0xff & 0xff;
+  } else {
+    if(size == 4) {
+      unicode = (unsigned int) *ptr++ & 0xff & 0x1f;
+    } else if (size == 3) {
+      unicode = (unsigned int) *ptr++ & 0xff & 0x0f;
+    } else {
+      unicode = (unsigned int) *ptr++ & 0xff & 0x07;  
+    }
+    unicode <<= 6;
+    
+    int time = size - 1;
+    while (time--) {
+      unicode += (unsigned int) *ptr++ & 0xff & 0x3f;
+      time && (unicode <<= 6);
+    }
+  }  
+  //得到unicode，转化为utf-16
+  int printInLen = sprintf(des, "%04x", unicode);
+  return ptr;
+}
+
+//输出数字
+static const char* print_number(const Cjson* out) {
+  if(out->nodeType != NodeType_NUMBER) {
+    printf("type error in print_number method\n");
+    exit(1);
+  }
+  char* res = (char*) malloc(80);
+  int len = 0;
+  if(!res) {
+    printf("malloc error in print_number method\n");
+    exit(1);
+  }
+  if(out -> isInt) {
+    len = sprintf(res, "%d", out->value.intNum);
+  } else {
+    len = sprintf(res, "%e", out->value.doubleNum);
+  }
+  char* tmpRes = (char*)realloc(res, len + 1);
+  if(!tmpRes) {
+    printf("realloc error in print_number function \n");
+    free(tmpRes);
+    exit(1);
+  }
+  res = tmpRes;
+  return res;
+}
+
+//输出array 的json
+static const char* print_array(const Cjson* out) {
+  int curLen = 80, len = 0;
+  char* res = (char*)cjson_malloc(curLen),
+    *subRes,
+    *resStart;
+  resStart = res;
+  Cjson* curCjson = out->child;
+  if(!curCjson) {
+    return NULL;
+  }
+  if(!res) {
+    printf("error in print_array method \n");
+    cjson_free(res);
+    exit(1);
+  }
+  *res++ = '[';
+  len++;
+  while(curCjson && curCjson->nodeType && curCjson->nodeType != NOTYPE) {
+    subRes = (char*)print_json(curCjson);
+    int tmpLen = strlen(subRes);
+    len += tmpLen + 1;
+    if(len >= curLen) {
+      while(curLen <= len)
+        curLen *= 2;
+      char* tmpc = (char*)realloc(resStart, curLen);
+      if(!tmpc) {
+        printf("Error in realloc in print_array function");
+        exit(1);
+      }
+      resStart = tmpc;
+      res = resStart + len - tmpLen - 2;
+    }
+    if(sprintf(res, "%s", subRes) != tmpLen ) {
+      printf("error in sprintf in print_array method");
+      cjson_free(res);
+      cjson_free((char*)subRes);
+      exit(1);
+    }
+    cjson_free(subRes);
+    res += tmpLen;
+    *res++ = ',';
+    curCjson = curCjson->next;
+  }
+  *(--res) = ']';
+  ++res;
+  *res++ = '\0';
+  len += 2;
+  char* tmpOne = (char*)realloc(resStart, len);
+  if(!tmpOne) {
+    printf("error in sprintf in print_array method");
+    cjson_free(resStart);
+    exit(1);
+  }
+  return tmpOne;
+}
+
+//输出object的json
+static const char* print_object(const Cjson* out) {
+  if(out->nodeType != NodeType_OBJECT) {
+    printf("error in print_object method/n");
+    exit(1);
+  }
+  int curLen = 80, len = 0;
+  char* res = (char*)cjson_malloc(curLen),
+    *subRes,
+    *resStart;
+  resStart = res;
+  Cjson* curCjson = out->child;
+  if(!curCjson) {
+    return NULL;
+  }
+  if(!res) {
+    printf("error in print_array method \n");
+    cjson_free(res);
+    exit(1);
+  }
+  *res++ = '{';
+  len++;
+  while(curCjson && curCjson->nodeType
+   && curCjson->nodeType != NOTYPE) {
+     char *keyName, *value; //处理键
+     int nameLen, valueLen;
+     keyName = (char *)curCjson->keyName;
+     if(!keyName) {
+       printf("error in print_object, no keyName\n");
+       exit(1);
+     }
+     nameLen = strlen(keyName);
+     len += nameLen + 4; // 加上了逗号与冒号,引号
+     if(len >= curLen) {
+      while(curLen <= len)
+        curLen *= 2;
+      char* tmpc = (char*)realloc(resStart, curLen);
+      if(!tmpc) {
+        printf("Error in realloc in print_object function");
+        exit(1);
+      }
+      resStart = tmpc;
+      res = resStart + len - nameLen - 5;
+    }
+    *res++ = '\"';
+    if(sprintf(res, "%s", keyName) != nameLen) {
+      printf("error in sprintf in print_object\n");
+      exit(1);
+    }
+    res += nameLen;
+    *res++ = '\"';
+    *res++ = ':';
+    value = (char *)print_json(curCjson); //处理值
+    valueLen = strlen(value);
+    len += valueLen;
+    if(len >= curLen) {
+      while(curLen <= len)
+        curLen *= 2;
+      char* tmpc = (char*)realloc(resStart, curLen);
+      if(!tmpc) {
+        printf("Error in realloc in print_object function");
+        exit(1);
+      }
+      resStart = tmpc;
+      res = resStart + len - valueLen - 1;
+    }
+    if(sprintf(res, "%s", value) != valueLen) {
+      printf("error in sprintf in print_object\n");
+      exit(1);
+    }
+    res += valueLen;
+    *res++ = ',';
+    cjson_free(value);
+    value = NULL;
+    curCjson = curCjson->next;
+  }
+  *(--res) = '}';
+  ++res;
+  *res++ = '\0';
+  len += 2;
+  char* tmpOne = (char*)realloc(resStart, len);
+  if(!tmpOne) {
+    printf("error in sprintf in print_object method");
+    cjson_free(resStart);
+    exit(1);
+  }
+  return tmpOne;
 }
